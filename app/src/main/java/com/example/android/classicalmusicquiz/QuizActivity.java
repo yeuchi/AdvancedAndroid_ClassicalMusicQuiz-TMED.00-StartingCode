@@ -16,6 +16,10 @@
 
 package com.example.android.classicalmusicquiz;
 
+import android.app.NotificationManager;
+import android.app.PendingIntent;
+import android.content.BroadcastReceiver;
+import android.content.Context;
 import android.content.Intent;
 import android.graphics.BitmapFactory;
 import android.graphics.Color;
@@ -24,9 +28,11 @@ import android.net.Uri;
 import android.os.Bundle;
 import android.os.Handler;
 import android.support.v4.content.ContextCompat;
+import android.support.v4.media.session.MediaButtonReceiver;
 import android.support.v4.media.session.MediaSessionCompat;
 import android.support.v4.media.session.PlaybackStateCompat;
 import android.support.v7.app.AppCompatActivity;
+import android.support.v7.app.NotificationCompat;
 import android.util.Log;
 import android.view.View;
 import android.widget.Button;
@@ -53,7 +59,6 @@ import com.google.android.exoplayer2.util.Util;
 
 import java.util.ArrayList;
 
-// TODO (1): Have this Activity implement ExoPlayer.EventListener and add the required methods.
 public class QuizActivity extends AppCompatActivity implements View.OnClickListener, ExoPlayer.EventListener {
 
     private static final int CORRECT_ANSWER_DELAY_MILLIS = 1000;
@@ -68,8 +73,10 @@ public class QuizActivity extends AppCompatActivity implements View.OnClickListe
     private SimpleExoPlayer mExoPlayer;
     private SimpleExoPlayerView mExoPlayerView;
     private static final String TAG = QuizActivity.class.getSimpleName();
-    private MediaSessionCompat mMediaSession;
+    protected static MediaSessionCompat mMediaSession;
     private PlaybackStateCompat.Builder mStateBuilder;
+    private NotificationManager mNotificationManager;
+
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -170,6 +177,55 @@ public class QuizActivity extends AppCompatActivity implements View.OnClickListe
         }
     }
 
+    private void showNotification(PlaybackStateCompat state)
+    {
+        NotificationCompat.Builder builder = new NotificationCompat.Builder(this);
+
+        int icon;
+        String play_pause;
+        if(state.getState() == PlaybackStateCompat.STATE_PLAYING)
+        {
+            icon = R.drawable.exo_controls_pause;
+            play_pause = getString(R.string.pause);
+        }
+        else
+        {
+            icon = R.drawable.exo_controls_play;
+            play_pause = getString(R.string.play);
+        }
+
+        NotificationCompat.Action playPauseAction = new android.support.v4.app.NotificationCompat
+                        .Action(icon,
+                        play_pause,
+                        MediaButtonReceiver.buildMediaButtonPendingIntent(this,
+                                                                            PlaybackStateCompat.ACTION_PLAY_PAUSE));
+
+        NotificationCompat.Action restartAction = new android.support.v4.app.NotificationCompat
+                .Action( R.drawable.exo_controls_previous,
+                        getString(R.string.restart),
+                        MediaButtonReceiver.buildMediaButtonPendingIntent(this,
+                                                    PlaybackStateCompat.ACTION_SKIP_TO_PREVIOUS));
+
+        PendingIntent contentPendingIntent = PendingIntent.getActivity(this,
+                0,
+                new Intent(this, QuizActivity.class), 0);
+
+        builder.setContentTitle(getString(R.string.guess))
+                .setContentText(getString(R.string.notification_text))
+                .setContentIntent(contentPendingIntent)
+                .setSmallIcon(R.drawable.ic_music_note)
+                .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
+                .addAction(restartAction)
+                .addAction(playPauseAction)
+                .setStyle(new NotificationCompat.MediaStyle()
+                .setMediaSession(mMediaSession.getSessionToken())
+                .setShowActionsInCompactView(0,1));
+
+        mNotificationManager = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
+        mNotificationManager.notify(0, builder.build());
+
+    }
+
     private void initializePlayer(Uri uri)
     {
         if(null==mExoPlayer)
@@ -178,8 +234,6 @@ public class QuizActivity extends AppCompatActivity implements View.OnClickListe
             LoadControl loadControl = new DefaultLoadControl();
             mExoPlayer = ExoPlayerFactory.newSimpleInstance(this, trackSelector, loadControl);
             mExoPlayerView.setPlayer(mExoPlayer);
-
-            // TODO (2): Set the ExoPlayer.EventListener to this activity
             mExoPlayer.addListener(this);
 
             String userAgent = Util.getUserAgent(this, "ClassicalMusicQuiz");
@@ -227,21 +281,25 @@ public class QuizActivity extends AppCompatActivity implements View.OnClickListe
                 }
                 mStateBuilder.setState(playBackState,
                         mExoPlayer.getCurrentPosition(), 1f);
-                mMediaSession.setPlaybackState(mStateBuilder.build());
+
                 break;
 
             case ExoPlayer.STATE_BUFFERING:
+                playBackState = PlaybackStateCompat.STATE_BUFFERING;
                 break;
 
             case ExoPlayer.STATE_ENDED:
-                break;
-
-            case ExoPlayer.STATE_IDLE:
+                playBackState = PlaybackStateCompat.STATE_STOPPED;
                 break;
 
             default:
+            case ExoPlayer.STATE_IDLE:
+                playBackState = PlaybackStateCompat.STATE_NONE;
                 break;
         }
+
+        mMediaSession.setPlaybackState(mStateBuilder.build());
+        showNotification(mStateBuilder.build());
     }
 
     @Override
@@ -256,6 +314,7 @@ public class QuizActivity extends AppCompatActivity implements View.OnClickListe
 
     private void releasePlayer()
     {
+        mNotificationManager.cancelAll();
         mExoPlayer.stop();
         mExoPlayer.release();
         mExoPlayer = null;
@@ -365,9 +424,20 @@ public class QuizActivity extends AppCompatActivity implements View.OnClickListe
     {
         super.onDestroy();
         releasePlayer();
-
-        // TODO (3): Add conditional logging statements to the onPlayerStateChanged() method
         // that log when ExoPlayer is playing or paused.
         mMediaSession.setActive(false);
+    }
+
+    // TODO (1): Create a static inner class that extends Broadcast Receiver and implement the onReceive() method.
+    //TODO (2): Call MediaButtonReceiver.handleIntent and pass in the incoming intent
+    // as well as the MediaSession object to forward the intent to the MediaSession.Callbacks.
+    public static class MyReceiver extends BroadcastReceiver
+    {
+        @Override
+        public void onReceive(Context context,
+                              Intent intent)
+        {
+            MediaButtonReceiver.handleIntent(mMediaSession, intent);
+        }
     }
 }
